@@ -44,6 +44,8 @@ Requests include the server API token in the Authorization header. HTTPS is requ
 
 The API token, encryption key, device settings, and synchronization state are stored locally in the plugin's `data.json`. This file is not itself encrypted. The optional Copy key button writes the key to the device clipboard.
 
+The diagnostics dialog shows the installed version, automatic synchronization settings, timestamps, and result counters. You can copy the report to the clipboard. It excludes the server URL, API token, encryption key, Vault/Device identifiers, device name, file paths, and raw error messages. It is never sent automatically.
+
 The plugin reads and changes files in the current vault using Obsidian's Vault API. It excludes the Obsidian configuration directory and trash, and does not synchronize plugin installations or settings. Conflict copies preserve competing changes. Deletions propagate between devices; synchronization is not a backup.
 
 ## Source and license
