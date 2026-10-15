@@ -18,7 +18,7 @@ This plugin is being prepared for submission to the Obsidian community directory
 
 Until publication, download `main.js`, `manifest.json`, and `styles.css` from the same GitHub release into `<vault>/.obsidian/plugins/floryajimo-private-sync/`, then enable the plugin in Obsidian.
 
-After approval and publication, install Ajimo Sync from **Settings ? Community plugins ? Browse**. Use **Check for updates** to find new releases and install them using the update button. Automatic update checking does not automatically install updates.
+After approval and publication, install Ajimo Sync from **Settings > Community plugins > Browse**. Use **Check for updates** to find new releases and install them using the update button. Automatic update checking does not automatically install updates.
 
 When updating an existing installation, keep its `data.json`. The plugin ID remains `floryajimo-private-sync`, including for versions formerly named Private Sync.
 
@@ -50,6 +50,15 @@ The plugin reads and changes files in the current vault using Obsidian's Vault A
 
 ## Source and license
 
-This repository contains public release metadata and downloadable plugin builds. The source is maintained separately and can be made available to the official Obsidian Community directory GitHub App for source review and build verification.
+This repository contains the complete TypeScript source of the Obsidian client, production build configuration, public release metadata, and downloadable plugin builds. The compatible server is maintained separately.
+
+Build the client with Node.js 22:
+
+```bash
+npm ci
+npm run build
+```
+
+The production bundle is written to main.js in the repository root. manifest.json and styles.css are distributed alongside it in GitHub Releases. Development and regression tests are maintained in the separate development repository.
 
 MIT License. Copyright 2026 FloryAjimo.

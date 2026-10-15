@@ -1,0 +1,51 @@
+.private-sync-secret .setting-item-control {
+  flex-wrap: wrap;
+}
+
+.private-sync-secret input {
+  font-family: var(--font-monospace);
+}
+
+.private-sync-warning {
+  color: var(--text-warning);
+  font-size: var(--font-ui-small);
+}
+
+.private-sync-status {
+  white-space: pre-line;
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+}
+
+.private-sync-statusbar {
+  cursor: pointer;
+}
+
+.private-sync-statusbar[data-state="syncing"] {
+  font-weight: 600;
+}
+
+.private-sync-statusbar[data-state="conflict"],
+.private-sync-statusbar[data-state="error"] {
+  color: var(--text-error);
+}
+
+.private-sync-statusbar[data-state="paused"],
+.private-sync-statusbar[data-state="not-configured"] {
+  color: var(--text-muted);
+}
+
+.private-sync-version {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.private-sync-diagnostics {
+  width: 100%;
+  resize: vertical;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-small);
+}

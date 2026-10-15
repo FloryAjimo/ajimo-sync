@@ -1,0 +1,24 @@
+{
+  "name": "obsidian-private-sync",
+  "version": "0.2.4",
+  "description": "Самостоятельно размещаемая E2EE-синхронизация для Obsidian.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production"
+  },
+  "keywords": [
+    "obsidian",
+    "sync",
+    "e2ee",
+    "self-hosted"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.15.17",
+    "esbuild": "^0.25.5",
+    "obsidian": "latest",
+    "typescript": "^5.8.3"
+  },
+  "private": true
+}
