@@ -30,6 +30,8 @@ When updating an existing installation, keep its `data.json`. The plugin ID rema
 4. Enable automatic synchronization on each device as desired. The change delay defaults to 5 seconds. The periodic check defaults to 10 minutes; 0 disables periodic checks.
 5. Automatic synchronization runs while Obsidian is open. Mobile operating systems can suspend it in the background.
 
+On Obsidian 1.13 or newer, the plugin settings are available in settings search. Obsidian 1.8 through 1.12 use a compatible settings page.
+
 Do not generate a new key to connect an existing vault. The server cannot recover a lost key.
 
 ## Data handling and network access
@@ -46,7 +48,7 @@ The API token, encryption key, device settings, and synchronization state are st
 
 The diagnostics dialog shows the installed version, automatic synchronization settings, timestamps, and result counters. You can copy the report to the clipboard. It excludes the server URL, API token, encryption key, Vault/Device identifiers, device name, file paths, and raw error messages. It is never sent automatically.
 
-The plugin reads and changes files in the current vault using Obsidian's Vault API. It excludes the Obsidian configuration directory and trash, and does not synchronize plugin installations or settings. Conflict copies preserve competing changes. Deletions propagate between devices; synchronization is not a backup.
+The plugin reads and changes files in the current vault using Obsidian's Vault API. It excludes the Obsidian configuration directory and trash, and does not synchronize plugin installations or settings. Conflict copies preserve competing changes. Deletions propagate between devices and use Obsidian's configured trash preference; synchronization is not a backup.
 
 ## Source and license
 

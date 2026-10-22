@@ -1,7 +1,7 @@
 {
   "id": "floryajimo-private-sync",
   "name": "Ajimo Sync",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "minAppVersion": "1.8.0",
   "description": "Sync notes and attachments through your own server with end-to-end encryption.",
   "author": "FloryAjimo",

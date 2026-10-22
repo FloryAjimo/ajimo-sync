@@ -355,7 +355,7 @@ export class SyncEngine {
     this.assertSnapshotCurrent(path, local);
     const existing = this.app.vault.getAbstractFileByPath(path);
     if (existing instanceof TFile) {
-      await this.app.vault.trash(existing, false);
+      await this.app.fileManager.trashFile(existing);
     }
   }
 

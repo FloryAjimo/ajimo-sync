@@ -1,6 +1,6 @@
 {
   "name": "obsidian-private-sync",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Самостоятельно размещаемая E2EE-синхронизация для Obsidian.",
   "main": "main.js",
   "scripts": {
