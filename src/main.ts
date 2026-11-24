@@ -1,4 +1,4 @@
-import { Notice, Plugin } from "obsidian";
+import { Notice, Plugin, requireApiVersion } from "obsidian";
 import { SyncApiClient } from "./api/client";
 import { PrivateSyncSettingTab } from "./settings/tab";
 import { SyncEngine } from "./sync/engine";
@@ -11,6 +11,11 @@ interface SyncOptions {
   automatic?: boolean;
   reason?: string;
 }
+
+const SECRET_NAMES = {
+  apiToken: "ajimo-sync-api-token",
+  vaultKeyBase64: "ajimo-sync-vault-key"
+} as const;
 
 const DEFAULT_DATA: PrivateSyncData = {
   settings: {
@@ -36,6 +41,7 @@ const DEFAULT_DATA: PrivateSyncData = {
 export default class PrivateSyncPlugin extends Plugin {
   data: PrivateSyncData = structuredClone(DEFAULT_DATA);
 
+  private saveQueue = Promise.resolve();
   private syncing = false;
   private pendingAutoSync = false;
   private debounceTimer: number | null = null;
@@ -123,10 +129,39 @@ export default class PrivateSyncPlugin extends Plugin {
         entries: loaded?.state?.entries ?? {}
       }
     };
+
+    if (requireApiVersion("1.11.5")) {
+      const storage = this.app.secretStorage;
+      if (storage) {
+        const { settings } = this.data;
+        const hadLegacySecrets = Boolean(settings.apiToken || settings.vaultKeyBase64);
+        settings.apiToken ||= storage.getSecret(SECRET_NAMES.apiToken) ?? "";
+        settings.vaultKeyBase64 ||= storage.getSecret(SECRET_NAMES.vaultKeyBase64) ?? "";
+        if (hadLegacySecrets) await this.savePluginData();
+      }
+    }
   }
 
   async savePluginData(): Promise<void> {
-    await this.saveData(this.data);
+    const snapshot = structuredClone(this.data);
+    const save = this.saveQueue.then(async () => {
+      if (requireApiVersion("1.11.5")) {
+        const storage = this.app.secretStorage;
+        if (storage) {
+          for (const key of ["apiToken", "vaultKeyBase64"] as const) {
+            const value = snapshot.settings[key];
+            if ((storage.getSecret(SECRET_NAMES[key]) ?? "") !== value) {
+              storage.setSecret(SECRET_NAMES[key], value);
+              if ((storage.getSecret(SECRET_NAMES[key]) ?? "") !== value) throw new Error("Could not save Ajimo Sync credentials.");
+            }
+            snapshot.settings[key] = "";
+          }
+        }
+      }
+      await this.saveData(snapshot);
+    });
+    this.saveQueue = save.catch(() => {});
+    await save;
   }
 
   isConfigured(): boolean {
@@ -213,7 +248,7 @@ export default class PrivateSyncPlugin extends Plugin {
     try {
       const engine = new SyncEngine(
         this.app,
-        this.data.settings,
+        { ...this.data.settings },
         this.data.state,
         () => this.savePluginData()
       );

@@ -19,7 +19,10 @@ export class SyncApiClient {
     if (url.protocol !== "https:" && !isLocalHttp) {
       throw new Error("Ajimo Sync требует HTTPS. HTTP разрешён только для localhost.");
     }
-    return this.serverUrl.replace(/\/+$/, "");
+    if (url.username || url.password || url.search || url.hash) {
+      throw new Error("Use a server URL without credentials, query parameters or a fragment.");
+    }
+    return url.href.replace(/\/+$/, "");
   }
 
   private headers(extra: Record<string, string> = {}): Record<string, string> {

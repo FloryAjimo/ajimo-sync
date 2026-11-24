@@ -29,6 +29,7 @@ export class SyncEngine {
 
   async sync(): Promise<SyncResult> {
     const stateBeforeSync = structuredClone(this.state);
+    this.state.entries = Object.assign(Object.create(null), this.state.entries);
     this.localVersions.clear();
     const events = this.trackLocalChanges();
     try {
@@ -42,8 +43,10 @@ export class SyncEngine {
         if (!remoteResponse.payload) throw new Error("Remote manifest payload is empty.");
         manifest = await decryptJson<RemoteManifest>(remoteResponse.payload, this.settings.vaultKeyBase64);
         this.validateManifest(manifest);
+        await this.acceptManifest(manifest, remoteResponse.payload);
+        manifest.entries = Object.assign(Object.create(null), manifest.entries);
       } else {
-        if (this.state.manifestEtag || Object.keys(this.state.entries).length > 0) {
+        if (this.state.manifestCheckpoint || this.state.manifestEtag || Object.keys(this.state.entries).length > 0) {
           throw new Error("Удалённый манифест ранее синхронизированного Vault отсутствует. Синхронизация остановлена; восстановите данные сервера из резервной копии.");
         }
         manifest = {
@@ -184,10 +187,13 @@ export class SyncEngine {
       }
 
       if (manifestDirty) {
+        if (manifest.generation >= Number.MAX_SAFE_INTEGER - 1) throw new Error("Manifest generation limit reached.");
         manifest.generation += 1;
         const encrypted = await encryptJson(manifest, this.settings.vaultKeyBase64);
+        const digest = await sha256Hex(encrypted);
         const etag = await api.putManifest(encrypted, remoteResponse.etag);
         this.state.manifestEtag = etag;
+        this.state.manifestCheckpoint = { generation: manifest.generation, digest };
       } else {
         this.state.manifestEtag = remoteResponse.etag;
       }
@@ -215,19 +221,69 @@ export class SyncEngine {
   }
 
   private validateManifest(manifest: RemoteManifest): void {
-    if (manifest.schemaVersion !== 1) throw new Error("Unsupported remote manifest schema.");
+    if (manifest?.schemaVersion !== 1) throw new Error("Unsupported remote manifest schema.");
     if (manifest.vaultId !== this.settings.vaultId) throw new Error("Vault ID does not match the encrypted manifest.");
+    if (!Number.isSafeInteger(manifest.generation) || manifest.generation < 1 || manifest.generation >= Number.MAX_SAFE_INTEGER ||
+        !manifest.entries || typeof manifest.entries !== "object" || Array.isArray(manifest.entries)) {
+      throw new Error("Invalid remote manifest.");
+    }
+    const hash = /^[a-f0-9]{64}$/;
+    for (const [path, entry] of Object.entries(manifest.entries)) {
+      if (!this.isRelativeVaultPath(path) || !entry || path !== entry.path ||
+          !Number.isSafeInteger(entry.revision) || entry.revision < 1 || entry.revision > manifest.generation ||
+          typeof entry.deleted !== "boolean" ||
+          (!entry.deleted && (!hash.test(entry.objectId ?? "") || !hash.test(entry.contentHash ?? "") ||
+            !Number.isSafeInteger(entry.size) || (entry.size ?? -1) < 0))) {
+        throw new Error("Invalid file entry in the remote manifest.");
+      }
+    }
+  }
+
+  private async acceptManifest(manifest: RemoteManifest, payload: ArrayBuffer): Promise<void> {
+    const digest = await sha256Hex(payload);
+    const checkpoint = this.state.manifestCheckpoint;
+    if (checkpoint && (manifest.generation < checkpoint.generation ||
+        (manifest.generation === checkpoint.generation && digest !== checkpoint.digest))) {
+      throw new Error("Сервер вернул более старый или несовместимый манифест. Проверьте сервер и резервную копию. Файлы не изменены.");
+    }
+    // Upgrades from versions without a checkpoint can still compare known file revisions.
+    for (const [path, previous] of Object.entries(this.state.entries)) {
+      if (this.isExcludedPath(path) || previous.remoteRevision === undefined) continue;
+      const remote = Object.hasOwn(manifest.entries, path) ? manifest.entries[path] : undefined;
+      if (!remote || remote.revision < previous.remoteRevision ||
+          (remote.revision === previous.remoteRevision && previous.remoteDeleted !== undefined && remote.deleted !== previous.remoteDeleted)) {
+        throw new Error("Сервер вернул более старую историю файлов. Проверьте сервер и резервную копию. Файлы не изменены.");
+      }
+    }
+    if (checkpoint?.digest === digest) return;
+
+    // Save the authenticated version before applying it. A later error can leave some files changed.
+    this.state.manifestCheckpoint = { generation: manifest.generation, digest };
+    try {
+      await this.persistState();
+    } catch (error) {
+      if (checkpoint) this.state.manifestCheckpoint = checkpoint;
+      else delete this.state.manifestCheckpoint;
+      throw error;
+    }
+  }
+
+  private isRelativeVaultPath(path: string): boolean {
+    return path.length > 0 && !/[\\:\u0000-\u001f]/.test(path) &&
+      path.split("/").every(part => part.length > 0 && part !== "." && part !== "..");
   }
 
   private isExcludedPath(path: string): boolean {
-    const configDir = normalizePath(this.app.vault.configDir);
+    const configDir = normalizePath(this.app.vault.configDir).normalize("NFC").toLowerCase();
+    path = path.normalize("NFC").toLowerCase();
     return path === configDir || path.startsWith(configDir + "/") || path.startsWith(".trash/") || path === ".trash";
   }
 
   private async scanLocalFiles(): Promise<Record<string, LocalFileSnapshot>> {
-    const result: Record<string, LocalFileSnapshot> = {};
+    const result: Record<string, LocalFileSnapshot> = Object.create(null);
     for (const file of this.app.vault.getFiles()) {
       if (this.isExcludedPath(file.path)) continue;
+      if (!this.isRelativeVaultPath(file.path)) throw new Error(`Unsupported vault path: ${file.path}`);
       const previous = this.state.entries[file.path];
       if (previous?.localHash && previous.localMtime === file.stat.mtime && previous.localSize === file.stat.size) {
         result[file.path] = {

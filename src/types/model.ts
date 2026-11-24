@@ -24,6 +24,7 @@ export interface LocalEntryState {
 
 export interface PrivateSyncLocalState {
   manifestEtag?: string;
+  manifestCheckpoint?: { generation: number; digest: string };
   entries: Record<string, LocalEntryState>;
   lastSuccessfulSyncAt?: number;
   lastErrorAt?: number;

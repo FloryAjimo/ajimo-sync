@@ -1,5 +1,7 @@
 # Ajimo Sync
 
+[Русская инструкция](README.ru.md)
+
 Sync notes and attachments between your Obsidian devices through your own server, with end-to-end encryption.
 
 Ajimo Sync is an experimental plugin. Windows and Android have been tested with a live server. Keep an independent backup of your vault.
@@ -7,18 +9,14 @@ Ajimo Sync is an experimental plugin. Windows and Android have been tested with 
 ## Requirements
 
 - Obsidian 1.8.0 or newer.
-- A compatible Private Sync server that you operate, reachable over HTTPS.
+- Your own [Ajimo Sync Server](https://github.com/FloryAjimo/ajimo-sync-server), reachable over HTTPS.
 - A server API token, a shared Vault ID, and a shared encryption key.
 
-The server implementation is currently in a private repository. It is not provided in this release repository, and a generic WebDAV server is not compatible. At present, installation is intended for users who already have access to the compatible server. Public server distribution is not yet available.
+The [server installation guide](https://github.com/FloryAjimo/ajimo-sync-server#deploy-on-a-linux-host) covers Docker Compose, HTTPS and backups.
 
 ## Installation and updates
 
-This plugin is being prepared for submission to the Obsidian community directory. It is not available in the directory yet.
-
-Until publication, download `main.js`, `manifest.json`, and `styles.css` from the same GitHub release into `<vault>/.obsidian/plugins/floryajimo-private-sync/`, then enable the plugin in Obsidian.
-
-After approval and publication, install Ajimo Sync from **Settings > Community plugins > Browse**. Use **Check for updates** to find new releases and install them using the update button. Automatic update checking does not automatically install updates.
+Install Ajimo Sync from **Settings > Community plugins > Browse**. Use **Check for updates** to look for a newer version. For manual installation, download `main.js`, `manifest.json`, and `styles.css` from the same GitHub release into `<vault>/.obsidian/plugins/floryajimo-private-sync/`, then enable the plugin.
 
 When updating an existing installation, keep its `data.json`. The plugin ID remains `floryajimo-private-sync`, including for versions formerly named Private Sync.
 
@@ -44,11 +42,11 @@ The plugin sends requests only to the server URL you configure. It does not cont
 
 Requests include the server API token in the Authorization header. HTTPS is required except for loopback development servers. The server sees the Vault ID, ciphertext sizes, object identifiers, and request timing. File contents and file paths are encrypted on the device using AES-256-GCM; the encryption key is not sent to the server.
 
-The API token, encryption key, device settings, and synchronization state are stored locally in the plugin's `data.json`. This file is not itself encrypted. The optional Copy key button writes the key to the device clipboard.
+With Obsidian 1.11.5 or later, Ajimo Sync migrates the API token and vault key to the local Obsidian SecretStorage when available. Older versions keep the values in the plugin's local `data.json`. Moving plugin settings to another device may require you to enter the token and key again. The optional Copy key button writes the key to the device clipboard.
 
 The diagnostics dialog shows the installed version, automatic synchronization settings, timestamps, and result counters. You can copy the report to the clipboard. It excludes the server URL, API token, encryption key, Vault/Device identifiers, device name, file paths, and raw error messages. It is never sent automatically.
 
-The plugin reads and changes files in the current vault using Obsidian's Vault API. It excludes the Obsidian configuration directory and trash, and does not synchronize plugin installations or settings. Conflict copies preserve competing changes. Deletions propagate between devices and use Obsidian's configured trash preference; synchronization is not a backup.
+The plugin reads and changes files in the current vault using Obsidian's Vault API. It excludes the Obsidian configuration directory and trash, and does not synchronize plugin installations or settings. Conflict copies preserve competing changes. Deletions propagate between devices and use Obsidian's configured trash preference. Keep your own backups. If a device reports an older or incompatible manifest, check the server URL and recover files into a separate test vault before resuming synchronization.
 
 ## Source and license
 
