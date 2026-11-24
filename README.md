@@ -12,7 +12,7 @@ Ajimo Sync is an experimental plugin. Windows and Android have been tested with 
 - Your own [Ajimo Sync Server](https://github.com/FloryAjimo/ajimo-sync-server), reachable over HTTPS.
 - A server API token, a shared Vault ID, and a shared encryption key.
 
-The [server installation guide](https://github.com/FloryAjimo/ajimo-sync-server#deploy-on-a-linux-host) covers Docker Compose, HTTPS and backups.
+The [server installation guide](https://github.com/FloryAjimo/ajimo-sync-server#deploy-on-a-linux-host) covers Docker Compose, HTTPS and backups. The plugin settings also link to the Russian guide below the Server URL field.
 
 ## Installation and updates
 

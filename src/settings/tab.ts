@@ -40,8 +40,14 @@ export class PrivateSyncSettingTab extends PluginSettingTab {
       },
       {
         name: "URL сервера",
-        desc: "HTTPS-адрес вашего Ajimo Sync сервера.",
+        desc: "HTTPS-адрес вашего сервера Ajimo Sync.",
         render: (setting) => {
+          setting.descEl.createDiv().createEl("a", {
+            text: "Инструкция по установке сервера",
+            href: "https://github.com/FloryAjimo/ajimo-sync-server/blob/main/README.ru.md",
+            cls: "external-link",
+            attr: { target: "_blank", rel: "noopener noreferrer" }
+          });
           setting.addText((text) =>
             text
               .setPlaceholder("https://sync.example.com")
