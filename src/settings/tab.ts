@@ -3,6 +3,7 @@ import { formatDiagnosticReport } from "../diagnostics/report";
 import { DiagnosticReportModal } from "../diagnostics/modal";
 import type PrivateSyncPlugin from "../main";
 import { generateVaultKeyBase64 } from "../crypto/crypto";
+import { PluginListModal } from "./plugin-list-modal";
 
 interface SyncSettingRow extends SettingDefinitionBase {
   render(setting: Setting): void;
@@ -227,6 +228,35 @@ export class PrivateSyncSettingTab extends PluginSettingTab {
                   await this.plugin.savePluginData();
                 })
               );
+            }
+          }
+        ]
+      },
+      {
+        type: "group",
+        heading: "Сторонние плагины",
+        items: [
+          {
+            name: "Синхронизировать список плагинов",
+            desc: "Обменивается названиями и идентификаторами установленных плагинов через зашифрованный манифест. Включите на устройствах, которые хотите сравнить.",
+            render: (setting) => {
+              setting.addToggle((toggle) =>
+                toggle.setValue(this.plugin.data.settings.syncPluginList === true).onChange(async (value) => {
+                  this.plugin.data.settings.syncPluginList = value;
+                  delete this.plugin.data.state.pluginComparison;
+                  await this.plugin.savePluginData();
+                  this.refreshSettings();
+                })
+              );
+            }
+          },
+          {
+            name: "Недостающие плагины",
+            desc: "Показывает плагины с других устройств по результатам последней синхронизации.",
+            render: (setting) => {
+              setting.addButton((button) => button.setButtonText("Показать")
+                .setDisabled(this.plugin.data.settings.syncPluginList !== true)
+                .onClick(() => new PluginListModal(this.app, this.plugin.data.state.pluginComparison).open()));
             }
           }
         ]

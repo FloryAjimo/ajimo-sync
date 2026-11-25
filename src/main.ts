@@ -32,7 +32,8 @@ const DEFAULT_DATA: PrivateSyncData = {
     debounceSeconds: 5,
     periodicSyncMinutes: 10,
     paused: false,
-    syncAppearance: false
+    syncAppearance: false,
+    syncPluginList: false
   },
   state: {
     entries: {}

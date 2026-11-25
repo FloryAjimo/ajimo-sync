@@ -9,6 +9,7 @@ import type {
   SyncResult
 } from "../types/model";
 import { AppearanceFiles, checkAppearanceNames, isAppearancePath } from "./appearance";
+import { reconcilePluginLists } from "./plugin-list";
 
 interface LocalFileSnapshot {
   file?: TFile;
@@ -70,7 +71,8 @@ export class SyncEngine {
         conflicts: 0,
         unchanged: 0
       };
-      let manifestDirty = !remoteResponse.exists;
+      const pluginLists = await reconcilePluginLists(this.app.vault, this.settings, manifest);
+      let manifestDirty = !remoteResponse.exists || pluginLists.changed;
 
       if (await this.reconcileEntries(manifest.entries, this.state.entries, local, api, result)) {
         manifestDirty = true;
@@ -91,6 +93,8 @@ export class SyncEngine {
         this.state.manifestEtag = remoteResponse.etag;
       }
 
+      if (pluginLists.comparison) this.state.pluginComparison = pluginLists.comparison;
+      else delete this.state.pluginComparison;
       await this.persistState();
       return result;
     } catch (error) {
@@ -102,6 +106,8 @@ export class SyncEngine {
       this.state.entries = stateBeforeSync.entries;
       if (stateBeforeSync.appearance) this.state.appearance = stateBeforeSync.appearance;
       else delete this.state.appearance;
+      if (stateBeforeSync.pluginComparison) this.state.pluginComparison = stateBeforeSync.pluginComparison;
+      else delete this.state.pluginComparison;
       for (const path of this.localVersions.keys()) this.invalidateCachedStat(path);
       throw error;
     } finally {

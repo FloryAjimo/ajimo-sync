@@ -13,6 +13,18 @@ export interface PrivateSyncSettings {
   periodicSyncMinutes: number;
   paused: boolean;
   syncAppearance: boolean;
+  syncPluginList: boolean;
+}
+
+export interface CommunityPluginInfo {
+  id: string;
+  name: string;
+  isDesktopOnly: boolean;
+}
+
+export interface PluginComparison {
+  otherDevices: number;
+  missing: CommunityPluginInfo[];
 }
 
 export interface LocalEntryState {
@@ -28,6 +40,7 @@ export interface PrivateSyncLocalState {
   manifestCheckpoint?: { generation: number; digest: string };
   entries: Record<string, LocalEntryState>;
   appearance?: { configDir: string; entries: Record<string, LocalEntryState> };
+  pluginComparison?: PluginComparison;
   lastSuccessfulSyncAt?: number;
   lastErrorAt?: number;
   lastError?: string;
@@ -57,6 +70,7 @@ export interface RemoteManifest {
   generation: number;
   entries: Record<string, ManifestEntry>;
   appearanceEntries?: Record<string, ManifestEntry>;
+  pluginLists?: Record<string, CommunityPluginInfo[]>;
 }
 
 export interface SyncResult {
