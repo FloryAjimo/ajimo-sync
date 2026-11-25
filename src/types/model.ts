@@ -12,6 +12,7 @@ export interface PrivateSyncSettings {
   debounceSeconds: number;
   periodicSyncMinutes: number;
   paused: boolean;
+  syncAppearance: boolean;
 }
 
 export interface LocalEntryState {
@@ -26,6 +27,7 @@ export interface PrivateSyncLocalState {
   manifestEtag?: string;
   manifestCheckpoint?: { generation: number; digest: string };
   entries: Record<string, LocalEntryState>;
+  appearance?: { configDir: string; entries: Record<string, LocalEntryState> };
   lastSuccessfulSyncAt?: number;
   lastErrorAt?: number;
   lastError?: string;
@@ -54,6 +56,7 @@ export interface RemoteManifest {
   vaultId: string;
   generation: number;
   entries: Record<string, ManifestEntry>;
+  appearanceEntries?: Record<string, ManifestEntry>;
 }
 
 export interface SyncResult {

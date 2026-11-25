@@ -31,7 +31,8 @@ const DEFAULT_DATA: PrivateSyncData = {
     syncOnFileChange: true,
     debounceSeconds: 5,
     periodicSyncMinutes: 10,
-    paused: false
+    paused: false,
+    syncAppearance: false
   },
   state: {
     entries: {}

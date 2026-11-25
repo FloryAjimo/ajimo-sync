@@ -32,6 +32,14 @@ On Obsidian 1.13 or newer, the plugin settings are available in settings search.
 
 Do not generate a new key to connect an existing vault. The server cannot recover a lost key.
 
+## Sync themes and CSS snippets
+
+1. On the device with your preferred theme and snippets, turn on **Sync themes and CSS snippets** in Ajimo Sync and run a manual sync.
+2. Turn on the option on each device that should share these files and run a sync there. The option starts disabled on each installation.
+3. In Obsidian's **Appearance** settings, select the downloaded theme and reload the CSS snippet list, then enable the snippets you want. Restart Obsidian if the theme list still needs refreshing.
+
+Ajimo Sync transfers `theme.css` and `manifest.json` for each theme and `.css` files directly in the snippets folder. Each device keeps its active theme and snippet selections. A manual, startup, or periodic sync picks up edits to these files even when Obsidian emits no vault file event. Deletions propagate to participating devices and go to the local vault trash. If both devices edit the same file, find the saved local copy in `ajimo-sync-conflicts` in the Obsidian configuration folder.
+
 ## Data handling and network access
 
 The plugin sends requests only to the server URL you configure. It does not contact an author-hosted service or send telemetry.
@@ -46,7 +54,7 @@ With Obsidian 1.11.5 or later, Ajimo Sync migrates the API token and vault key t
 
 The diagnostics dialog shows the installed version, automatic synchronization settings, timestamps, and result counters. You can copy the report to the clipboard. It excludes the server URL, API token, encryption key, Vault/Device identifiers, device name, file paths, and raw error messages. It is never sent automatically.
 
-The plugin reads and changes files in the current vault using Obsidian's Vault API. It excludes the Obsidian configuration directory and trash, and does not synchronize plugin installations or settings. Conflict copies preserve competing changes. Deletions propagate between devices and use Obsidian's configured trash preference. Keep your own backups. If a device reports an older or incompatible manifest, check the server URL and recover files into a separate test vault before resuming synchronization.
+The plugin reads and changes notes and attachments using Obsidian's Vault API and uses the adapter for the optional theme and snippet files. Plugin installations and settings, workspace layouts, and trash stay local. Conflict copies preserve competing changes. Deletions of notes and attachments use Obsidian's configured trash preference. Keep your own backups. If a device reports an older or incompatible manifest, check the server URL and recover files into a separate test vault before resuming synchronization.
 
 ## Source and license
 

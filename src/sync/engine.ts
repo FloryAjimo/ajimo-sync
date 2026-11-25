@@ -8,9 +8,10 @@ import type {
   RemoteManifest,
   SyncResult
 } from "../types/model";
+import { AppearanceFiles, checkAppearanceNames, isAppearancePath } from "./appearance";
 
 interface LocalFileSnapshot {
-  file: TFile;
+  file?: TFile;
   hash: string;
   mtime: number;
   size: number;
@@ -19,13 +20,16 @@ interface LocalFileSnapshot {
 
 export class SyncEngine {
   private readonly localVersions = new Map<string, number>();
+  private readonly appearance?: AppearanceFiles;
 
   constructor(
     private readonly app: App,
     private readonly settings: PrivateSyncSettings,
     private readonly state: PrivateSyncLocalState,
     private readonly persistState: () => Promise<void>
-  ) {}
+  ) {
+    if (settings.syncAppearance === true) this.appearance = new AppearanceFiles(app.vault);
+  }
 
   async sync(): Promise<SyncResult> {
     const stateBeforeSync = structuredClone(this.state);
@@ -68,122 +72,11 @@ export class SyncEngine {
       };
       let manifestDirty = !remoteResponse.exists;
 
-      const paths = new Set<string>([
-        ...Object.keys(local),
-        ...Object.keys(manifest.entries),
-        ...Object.keys(this.state.entries)
-      ]);
-
-      for (const path of Array.from(paths).sort()) {
-        if (this.isExcludedPath(path)) continue;
-        const localFile = local[path];
-        const remote = manifest.entries[path];
-        const previous = this.state.entries[path];
-
-        if (!previous) {
-          if (localFile && remote && !remote.deleted) {
-            if (remote.contentHash === localFile.hash) {
-              this.recordState(path, localFile, remote.revision, false);
-              result.unchanged += 1;
-            } else {
-              await this.resolveContentConflict(path, localFile, remote, api);
-              this.recordRemoteState(path, remote);
-              result.conflicts += 1;
-            }
-          } else if (localFile && remote?.deleted) {
-            await this.preserveConflictCopy(path, localFile);
-            await this.deletePathIfExists(path, localFile);
-            this.state.entries[path] = { remoteRevision: remote.revision, remoteDeleted: true };
-            result.conflicts += 1;
-            result.deletedLocal += 1;
-          } else if (localFile && !remote) {
-            await this.uploadLocal(path, localFile, 0, manifest, api);
-            manifestDirty = true;
-            result.uploaded += 1;
-          } else if (!localFile && remote && !remote.deleted) {
-            await this.applyRemoteFile(path, remote, api, localFile);
-            this.recordRemoteState(path, remote);
-            result.downloaded += 1;
-          } else if (remote?.deleted) {
-            this.state.entries[path] = {
-              remoteRevision: remote.revision,
-              remoteDeleted: true
-            };
-            result.unchanged += 1;
-          }
-          continue;
-        }
-
-        const localChanged = this.hasLocalChanged(localFile, previous);
-        const remoteChanged = this.hasRemoteChanged(remote, previous);
-
-        if (!localChanged && !remoteChanged) {
-          if (localFile && remote) this.recordState(path, localFile, remote.revision, remote.deleted);
-          result.unchanged += 1;
-          continue;
-        }
-
-        if (localChanged && remoteChanged) {
-          if (localFile && remote && !remote.deleted && localFile.hash === remote.contentHash) {
-            this.recordState(path, localFile, remote.revision, false);
-            result.unchanged += 1;
-            continue;
-          }
-
-          if (remote?.deleted) {
-            if (localFile) {
-              await this.preserveConflictCopy(path, localFile);
-              await this.deletePathIfExists(path, localFile);
-            }
-            this.state.entries[path] = { remoteRevision: remote.revision, remoteDeleted: true };
-            result.conflicts += 1;
-            result.deletedLocal += 1;
-            continue;
-          }
-
-          if (remote && !remote.deleted) {
-            if (localFile) await this.preserveConflictCopy(path, localFile);
-            await this.applyRemoteFile(path, remote, api, localFile);
-            this.recordRemoteState(path, remote);
-            result.conflicts += 1;
-            result.downloaded += 1;
-            continue;
-          }
-        }
-
-        if (localChanged) {
-          if (localFile) {
-            await this.uploadLocal(path, localFile, remote?.revision ?? previous.remoteRevision ?? 0, manifest, api);
-            manifestDirty = true;
-            result.uploaded += 1;
-          } else {
-            this.assertSnapshotCurrent(path, undefined);
-            const nextRevision = (remote?.revision ?? previous.remoteRevision ?? 0) + 1;
-            manifest.entries[path] = {
-              path,
-              revision: nextRevision,
-              deleted: true,
-              updatedBy: this.settings.deviceId,
-              updatedAt: Date.now()
-            };
-            this.state.entries[path] = { remoteRevision: nextRevision, remoteDeleted: true };
-            manifestDirty = true;
-            result.deletedRemote += 1;
-          }
-          continue;
-        }
-
-        if (remoteChanged && remote) {
-          if (remote.deleted) {
-            await this.deletePathIfExists(path, localFile);
-            this.state.entries[path] = { remoteRevision: remote.revision, remoteDeleted: true };
-            result.deletedLocal += 1;
-          } else {
-            await this.applyRemoteFile(path, remote, api, localFile);
-            this.recordRemoteState(path, remote);
-            result.downloaded += 1;
-          }
-        }
+      if (await this.reconcileEntries(manifest.entries, this.state.entries, local, api, result)) {
+        manifestDirty = true;
+      }
+      if (this.appearance && await this.syncAppearance(manifest, api, result, this.appearance)) {
+        manifestDirty = true;
       }
 
       if (manifestDirty) {
@@ -207,11 +100,168 @@ export class SyncEngine {
         this.state.manifestEtag = stateBeforeSync.manifestEtag;
       }
       this.state.entries = stateBeforeSync.entries;
+      if (stateBeforeSync.appearance) this.state.appearance = stateBeforeSync.appearance;
+      else delete this.state.appearance;
       for (const path of this.localVersions.keys()) this.invalidateCachedStat(path);
       throw error;
     } finally {
       for (const event of events) this.app.vault.offref(event);
     }
+  }
+
+  private async syncAppearance(manifest: RemoteManifest, api: SyncApiClient, result: SyncResult, appearance: AppearanceFiles): Promise<boolean> {
+    const entries: RemoteManifest["entries"] = Object.assign(Object.create(null), manifest.appearanceEntries);
+    const paths = await appearance.listPaths();
+    checkAppearanceNames([...paths, ...Object.keys(entries).filter(isAppearancePath)]);
+
+    const previousEntries: Record<string, LocalEntryState> = Object.assign(Object.create(null), this.appearanceHistory());
+    this.state.appearance = { configDir: appearance.configDir, entries: previousEntries };
+    const local: Record<string, LocalFileSnapshot> = Object.create(null);
+    for (const path of paths) {
+      // Hidden files do not have reliable Vault change events. Rehash on every run.
+      local[path] = (await this.readAppearanceFile(appearance, appearance.fullPath(path))).snapshot;
+    }
+
+    if (!await this.reconcileEntries(entries, previousEntries, local, api, result, appearance)) return false;
+    manifest.appearanceEntries = entries;
+    return true;
+  }
+
+  private appearanceHistory(): Record<string, LocalEntryState> | undefined {
+    if (this.appearance && this.state.appearance?.configDir === this.appearance.configDir) {
+      return this.state.appearance.entries;
+    }
+    return undefined;
+  }
+
+  private async reconcileEntries(
+    entries: RemoteManifest["entries"],
+    previousEntries: Record<string, LocalEntryState>,
+    local: Record<string, LocalFileSnapshot>,
+    api: SyncApiClient,
+    result: SyncResult,
+    appearance?: AppearanceFiles
+  ): Promise<boolean> {
+    let manifestDirty = false;
+    const paths = new Set<string>([
+      ...Object.keys(local),
+      ...Object.keys(entries),
+      ...Object.keys(previousEntries)
+    ]);
+
+    for (const path of Array.from(paths).sort()) {
+      if (appearance ? !isAppearancePath(path) : this.isExcludedPath(path)) continue;
+      const filePath = appearance ? appearance.fullPath(path) : path;
+      const localFile = local[path];
+      const remote = entries[path];
+      const previous = previousEntries[path];
+
+      if (!previous) {
+        if (localFile && remote && !remote.deleted) {
+          if (remote.contentHash === localFile.hash) {
+            this.recordState(previousEntries, path, localFile, remote.revision, false);
+            result.unchanged += 1;
+          } else {
+            await this.resolveContentConflict(filePath, localFile, remote, api);
+            this.recordRemoteState(previousEntries, path, remote);
+            result.conflicts += 1;
+          }
+        } else if (localFile && remote?.deleted) {
+          await this.preserveConflictCopy(filePath, localFile);
+          await this.deletePathIfExists(filePath, localFile);
+          previousEntries[path] = { remoteRevision: remote.revision, remoteDeleted: true };
+          result.conflicts += 1;
+          result.deletedLocal += 1;
+        } else if (localFile && !remote) {
+          await this.uploadLocal(path, filePath, localFile, 0, entries, previousEntries, api);
+          manifestDirty = true;
+          result.uploaded += 1;
+        } else if (!localFile && remote && !remote.deleted) {
+          await this.applyRemoteFile(filePath, remote, api, localFile);
+          this.recordRemoteState(previousEntries, path, remote);
+          result.downloaded += 1;
+        } else if (remote?.deleted) {
+          previousEntries[path] = {
+            remoteRevision: remote.revision,
+            remoteDeleted: true
+          };
+          result.unchanged += 1;
+        }
+        continue;
+      }
+
+      const localChanged = this.hasLocalChanged(localFile, previous);
+      const remoteChanged = this.hasRemoteChanged(remote, previous);
+
+      if (!localChanged && !remoteChanged) {
+        if (localFile && remote) this.recordState(previousEntries, path, localFile, remote.revision, remote.deleted);
+        result.unchanged += 1;
+        continue;
+      }
+
+      if (localChanged && remoteChanged) {
+        if (localFile && remote && !remote.deleted && localFile.hash === remote.contentHash) {
+          this.recordState(previousEntries, path, localFile, remote.revision, false);
+          result.unchanged += 1;
+          continue;
+        }
+
+        if (remote?.deleted) {
+          if (localFile) {
+            await this.preserveConflictCopy(filePath, localFile);
+            await this.deletePathIfExists(filePath, localFile);
+          }
+          previousEntries[path] = { remoteRevision: remote.revision, remoteDeleted: true };
+          result.conflicts += 1;
+          result.deletedLocal += 1;
+          continue;
+        }
+
+        if (remote && !remote.deleted) {
+          if (localFile) await this.preserveConflictCopy(filePath, localFile);
+          await this.applyRemoteFile(filePath, remote, api, localFile);
+          this.recordRemoteState(previousEntries, path, remote);
+          result.conflicts += 1;
+          result.downloaded += 1;
+          continue;
+        }
+      }
+
+      if (localChanged) {
+        if (localFile) {
+          await this.uploadLocal(path, filePath, localFile, remote?.revision ?? previous.remoteRevision ?? 0, entries, previousEntries, api);
+          manifestDirty = true;
+          result.uploaded += 1;
+        } else {
+          await this.readExpectedLocal(filePath, undefined);
+          const nextRevision = (remote?.revision ?? previous.remoteRevision ?? 0) + 1;
+          entries[path] = {
+            path,
+            revision: nextRevision,
+            deleted: true,
+            updatedBy: this.settings.deviceId,
+            updatedAt: Date.now()
+          };
+          previousEntries[path] = { remoteRevision: nextRevision, remoteDeleted: true };
+          manifestDirty = true;
+          result.deletedRemote += 1;
+        }
+        continue;
+      }
+
+      if (remoteChanged && remote) {
+        if (remote.deleted) {
+          await this.deletePathIfExists(filePath, localFile);
+          previousEntries[path] = { remoteRevision: remote.revision, remoteDeleted: true };
+          result.deletedLocal += 1;
+        } else {
+          await this.applyRemoteFile(filePath, remote, api, localFile);
+          this.recordRemoteState(previousEntries, path, remote);
+          result.downloaded += 1;
+        }
+      }
+    }
+    return manifestDirty;
   }
 
   private validateSettings(): void {
@@ -227,10 +277,20 @@ export class SyncEngine {
         !manifest.entries || typeof manifest.entries !== "object" || Array.isArray(manifest.entries)) {
       throw new Error("Invalid remote manifest.");
     }
+    this.validateEntries(manifest.entries, manifest.generation);
+    if (this.appearance && manifest.appearanceEntries !== undefined) {
+      const entries = manifest.appearanceEntries;
+      if (!entries || typeof entries !== "object" || Array.isArray(entries)) throw new Error("Invalid appearance index.");
+      this.validateEntries(entries, manifest.generation, true);
+    }
+  }
+
+  private validateEntries(entries: RemoteManifest["entries"], generation: number, appearance = false): void {
     const hash = /^[a-f0-9]{64}$/;
-    for (const [path, entry] of Object.entries(manifest.entries)) {
+    for (const [path, entry] of Object.entries(entries)) {
+      if (appearance && !isAppearancePath(path)) continue;
       if (!this.isRelativeVaultPath(path) || !entry || path !== entry.path ||
-          !Number.isSafeInteger(entry.revision) || entry.revision < 1 || entry.revision > manifest.generation ||
+          !Number.isSafeInteger(entry.revision) || entry.revision < 1 || entry.revision > generation ||
           typeof entry.deleted !== "boolean" ||
           (!entry.deleted && (!hash.test(entry.objectId ?? "") || !hash.test(entry.contentHash ?? "") ||
             !Number.isSafeInteger(entry.size) || (entry.size ?? -1) < 0))) {
@@ -247,14 +307,9 @@ export class SyncEngine {
       throw new Error("Сервер вернул более старый или несовместимый манифест. Проверьте сервер и резервную копию. Файлы не изменены.");
     }
     // Upgrades from versions without a checkpoint can still compare known file revisions.
-    for (const [path, previous] of Object.entries(this.state.entries)) {
-      if (this.isExcludedPath(path) || previous.remoteRevision === undefined) continue;
-      const remote = Object.hasOwn(manifest.entries, path) ? manifest.entries[path] : undefined;
-      if (!remote || remote.revision < previous.remoteRevision ||
-          (remote.revision === previous.remoteRevision && previous.remoteDeleted !== undefined && remote.deleted !== previous.remoteDeleted)) {
-        throw new Error("Сервер вернул более старую историю файлов. Проверьте сервер и резервную копию. Файлы не изменены.");
-      }
-    }
+    this.checkEntryHistory(this.state.entries, manifest.entries, path => !this.isExcludedPath(path));
+    const appearanceHistory = this.appearanceHistory();
+    if (appearanceHistory) this.checkEntryHistory(appearanceHistory, manifest.appearanceEntries ?? {}, isAppearancePath);
     if (checkpoint?.digest === digest) return;
 
     // Save the authenticated version before applying it. A later error can leave some files changed.
@@ -265,6 +320,21 @@ export class SyncEngine {
       if (checkpoint) this.state.manifestCheckpoint = checkpoint;
       else delete this.state.manifestCheckpoint;
       throw error;
+    }
+  }
+
+  private checkEntryHistory(
+    history: Record<string, LocalEntryState>,
+    entries: RemoteManifest["entries"],
+    includes: (path: string) => boolean
+  ): void {
+    for (const [path, previous] of Object.entries(history)) {
+      if (!includes(path) || previous.remoteRevision === undefined) continue;
+      const remote = Object.hasOwn(entries, path) ? entries[path] : undefined;
+      if (!remote || remote.revision < previous.remoteRevision ||
+          (remote.revision === previous.remoteRevision && previous.remoteDeleted !== undefined && remote.deleted !== previous.remoteDeleted)) {
+        throw new Error("Сервер вернул более старую историю файлов. Проверьте сервер и резервную копию. Файлы не изменены.");
+      }
     }
   }
 
@@ -313,18 +383,28 @@ export class SyncEngine {
 
   private async uploadLocal(
     path: string,
+    filePath: string,
     local: LocalFileSnapshot,
     baseRevision: number,
-    manifest: RemoteManifest,
+    entries: RemoteManifest["entries"],
+    previousEntries: Record<string, LocalEntryState>,
     api: SyncApiClient
   ): Promise<void> {
-    this.assertSnapshotCurrent(path, local);
-    const { bytes, snapshot } = await this.readLocalFile(path);
+    const appearance = this.appearance;
+    let content;
+    if (appearance?.contains(filePath)) {
+      content = await this.readAppearanceFile(appearance, filePath);
+      if (content.snapshot.hash !== local.hash) throw this.localChangedError(filePath);
+    } else {
+      this.assertSnapshotCurrent(filePath, local);
+      content = await this.readLocalFile(filePath);
+    }
+    const { bytes, snapshot } = content;
     const encrypted = await encryptEnvelope(bytes, this.settings.vaultKeyBase64, "object");
     const objectId = await sha256Hex(encrypted);
     await api.putObject(objectId, encrypted);
     const revision = baseRevision + 1;
-    manifest.entries[path] = {
+    entries[path] = {
       path,
       revision,
       objectId,
@@ -335,7 +415,7 @@ export class SyncEngine {
       updatedBy: this.settings.deviceId,
       updatedAt: Date.now()
     };
-    this.recordState(path, snapshot, revision, false);
+    this.recordState(previousEntries, path, snapshot, revision, false);
   }
 
   private async applyRemoteFile(
@@ -352,6 +432,22 @@ export class SyncEngine {
     const plain = await decryptEnvelope(encrypted, this.settings.vaultKeyBase64, "object");
     if (await sha256Hex(plain) !== remote.contentHash) {
       throw new Error(`Decrypted content hash mismatch for ${path}.`);
+    }
+    const appearance = this.appearance;
+    if (appearance?.contains(path)) {
+      await appearance.ensureParentFolders(path);
+      const current = await this.readExpectedLocal(path, local);
+      const remoteText = this.decodeText(plain);
+      const localText = current && this.decodeText(current.bytes);
+      if (remoteText !== undefined && localText !== undefined) {
+        await appearance.adapter.process(path, (content) => {
+          if (content !== localText) throw this.localChangedError(path);
+          return remoteText;
+        });
+      } else {
+        await appearance.adapter.writeBinary(path, plain);
+      }
+      return;
     }
     const current = await this.readExpectedLocal(path, local);
     await this.ensureParentFolders(path);
@@ -388,6 +484,16 @@ export class SyncEngine {
   }
 
   private async preserveConflictCopy(path: string, local: LocalFileSnapshot): Promise<void> {
+    const appearance = this.appearance;
+    if (appearance?.contains(path)) {
+      const conflictPath = this.makeConflictPath(appearance.conflictPath(path));
+      await appearance.ensureParentFolders(conflictPath);
+      if (await appearance.adapter.exists(conflictPath)) throw new Error(`Conflict copy already exists: ${conflictPath}`);
+      const current = await this.readExpectedLocal(path, local);
+      if (!current) throw this.localChangedError(path);
+      await appearance.adapter.writeBinary(conflictPath, current.bytes);
+      return;
+    }
     const current = await this.readExpectedLocal(path, local);
     if (!current) throw this.localChangedError(path);
     const conflictPath = this.makeConflictPath(path);
@@ -408,6 +514,11 @@ export class SyncEngine {
 
   private async deletePathIfExists(path: string, local: LocalFileSnapshot | undefined): Promise<void> {
     await this.readExpectedLocal(path, local);
+    const appearance = this.appearance;
+    if (appearance?.contains(path)) {
+      if (local) await appearance.adapter.trashLocal(path);
+      return;
+    }
     this.assertSnapshotCurrent(path, local);
     const existing = this.app.vault.getAbstractFileByPath(path);
     if (existing instanceof TFile) {
@@ -428,19 +539,20 @@ export class SyncEngine {
     }
   }
 
-  private recordState(path: string, local: LocalFileSnapshot, remoteRevision: number, remoteDeleted: boolean): void {
-    this.state.entries[path] = {
+  private recordState(entries: Record<string, LocalEntryState>, path: string, local: LocalFileSnapshot, remoteRevision: number, remoteDeleted: boolean): void {
+    const cacheStat = local.file && local.version === this.localVersion(path);
+    entries[path] = {
       localHash: local.hash,
-      localMtime: local.version === this.localVersion(path) ? local.mtime : undefined,
-      localSize: local.version === this.localVersion(path) ? local.size : undefined,
+      localMtime: cacheStat ? local.mtime : undefined,
+      localSize: cacheStat ? local.size : undefined,
       remoteRevision,
       remoteDeleted
     };
   }
 
-  private recordRemoteState(path: string, remote: RemoteManifest["entries"][string]): void {
+  private recordRemoteState(entries: Record<string, LocalEntryState>, path: string, remote: RemoteManifest["entries"][string]): void {
     // Record the bytes we applied, not a later local edit that may arrive after the write.
-    this.state.entries[path] = {
+    entries[path] = {
       localHash: remote.contentHash,
       remoteRevision: remote.revision,
       remoteDeleted: false
@@ -487,7 +599,7 @@ export class SyncEngine {
       if (current) throw this.localChangedError(path);
       return;
     }
-    if (current !== snapshot.file || snapshot.file.path !== path ||
+    if (!snapshot.file || current !== snapshot.file || snapshot.file.path !== path ||
       snapshot.version !== this.localVersion(path) ||
       snapshot.mtime !== snapshot.file.stat.mtime || snapshot.size !== snapshot.file.stat.size) {
       throw this.localChangedError(path);
@@ -511,10 +623,32 @@ export class SyncEngine {
     return { bytes, snapshot };
   }
 
+  private async readAppearanceFile(appearance: AppearanceFiles, path: string): Promise<{ bytes: ArrayBuffer; snapshot: LocalFileSnapshot }> {
+    const stat = await appearance.adapter.stat(path);
+    if (stat?.type !== "file") throw this.localChangedError(path);
+    const bytes = await appearance.adapter.readBinary(path);
+    const hash = await sha256Hex(bytes);
+    const after = await appearance.adapter.stat(path);
+    if (after?.type !== "file" || after.mtime !== stat.mtime || after.size !== stat.size || bytes.byteLength !== stat.size) {
+      throw this.localChangedError(path);
+    }
+    return { bytes, snapshot: { hash, mtime: stat.mtime, size: stat.size, version: 0 } };
+  }
+
   private async readExpectedLocal(
     path: string,
     expected: LocalFileSnapshot | undefined
   ): Promise<{ bytes: ArrayBuffer; snapshot: LocalFileSnapshot } | undefined> {
+    const appearance = this.appearance;
+    if (appearance?.contains(path)) {
+      if (!expected) {
+        if (await appearance.adapter.stat(path)) throw this.localChangedError(path);
+        return undefined;
+      }
+      const current = await this.readAppearanceFile(appearance, path);
+      if (current.snapshot.hash !== expected.hash) throw this.localChangedError(path);
+      return current;
+    }
     this.assertSnapshotCurrent(path, expected);
     if (!expected) return undefined;
     const current = await this.readLocalFile(path);

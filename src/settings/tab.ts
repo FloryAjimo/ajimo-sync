@@ -215,6 +215,24 @@ export class PrivateSyncSettingTab extends PluginSettingTab {
       },
       {
         type: "group",
+        heading: "Оформление",
+        items: [
+          {
+            name: "Синхронизировать темы и CSS-сниппеты",
+            desc: "Включите на устройствах, между которыми нужно переносить файлы оформления. Активную тему и сниппеты выбирайте на каждом устройстве. После загрузки обновите список сниппетов в Obsidian.",
+            render: (setting) => {
+              setting.addToggle((toggle) =>
+                toggle.setValue(this.plugin.data.settings.syncAppearance === true).onChange(async (value) => {
+                  this.plugin.data.settings.syncAppearance = value;
+                  await this.plugin.savePluginData();
+                })
+              );
+            }
+          }
+        ]
+      },
+      {
+        type: "group",
         heading: "Автоматическая синхронизация",
         items: [
           {
