@@ -1,5 +1,14 @@
 import { normalizePath, type DataAdapter, type Vault } from "obsidian";
 
+export function parseConfigJson(text: string | undefined, path: string): unknown {
+  try {
+    if (text !== undefined) return JSON.parse(text.replace(/^\uFEFF/, ""));
+  } catch {
+    // Do not include file contents in the error. Settings may contain credentials.
+  }
+  throw new Error(`Файл настроек ${path} должен содержать корректный JSON в UTF-8.`);
+}
+
 export class ConfigFiles {
   readonly configDir: string;
   readonly adapter: DataAdapter;

@@ -235,6 +235,18 @@ export class PrivateSyncSettingTab extends PluginSettingTab {
         ]
       },
       {
+        name: "Синхронизировать горячие клавиши",
+        desc: "Передаёт пользовательские сочетания клавиш Obsidian. Включите на нужных устройствах. После получения сочетаний перезапустите Obsidian, чтобы применить их.",
+        render: (setting) => {
+          setting.addToggle(toggle => toggle
+            .setValue(this.plugin.data.settings.syncHotkeys === true)
+            .onChange(async (value) => {
+              this.plugin.data.settings.syncHotkeys = value;
+              await this.plugin.savePluginData();
+            }));
+        }
+      },
+      {
         type: "group",
         heading: "Сторонние плагины",
         items: [

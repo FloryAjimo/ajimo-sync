@@ -33,6 +33,7 @@ const DEFAULT_DATA: PrivateSyncData = {
     periodicSyncMinutes: 10,
     paused: false,
     syncAppearance: false,
+    syncHotkeys: false,
     syncPluginList: false,
     pluginSettingsIds: []
   },

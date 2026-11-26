@@ -32,15 +32,3 @@ export async function listSelectedSettingsPaths(files: ConfigFiles, selected: un
   }
   return paths;
 }
-
-export function checkPluginSettingsJson(text: string | undefined, path: string): void {
-  try {
-    if (text !== undefined) {
-      JSON.parse(text.replace(/^\uFEFF/, ""));
-      return;
-    }
-  } catch {
-    // Report only the file path. Settings may include credentials.
-  }
-  throw new Error(`Файл настроек ${path} должен содержать корректный JSON в UTF-8.`);
-}

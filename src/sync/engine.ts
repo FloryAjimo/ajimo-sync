@@ -9,12 +9,14 @@ import type {
   SyncResult
 } from "../types/model";
 import { checkAppearanceNames, isAppearancePath, listAppearancePaths } from "./appearance";
-import { ConfigFiles } from "./config-files";
+import { ConfigFiles, parseConfigJson } from "./config-files";
+import { checkHotkeys, HOTKEYS_PATH } from "./hotkeys";
 import { reconcilePluginLists } from "./plugin-list";
-import { checkPluginSettingsJson, isPluginSettingsInstalled, listSelectedSettingsPaths } from "./plugin-settings";
+import { isPluginSettingsInstalled, listSelectedSettingsPaths } from "./plugin-settings";
 
-const CONFIG_INDEX = { appearance: "appearanceEntries", pluginSettings: "pluginSettingsEntries" } as const;
+const CONFIG_INDEX = { appearance: "appearanceEntries", hotkeys: "hotkeyEntries", pluginSettings: "pluginSettingsEntries" } as const;
 type ConfigGroup = keyof typeof CONFIG_INDEX;
+const CONFIG_GROUPS = Object.keys(CONFIG_INDEX) as ConfigGroup[];
 
 interface LocalFileSnapshot {
   file?: TFile;
@@ -111,10 +113,11 @@ export class SyncEngine {
         this.state.manifestEtag = stateBeforeSync.manifestEtag;
       }
       this.state.entries = stateBeforeSync.entries;
-      if (stateBeforeSync.appearance) this.state.appearance = stateBeforeSync.appearance;
-      else delete this.state.appearance;
-      if (stateBeforeSync.pluginSettings) this.state.pluginSettings = stateBeforeSync.pluginSettings;
-      else delete this.state.pluginSettings;
+      for (const group of CONFIG_GROUPS) {
+        const history = stateBeforeSync[group];
+        if (history) this.state[group] = history;
+        else delete this.state[group];
+      }
       if (stateBeforeSync.pluginComparison) this.state.pluginComparison = stateBeforeSync.pluginComparison;
       else delete this.state.pluginComparison;
       for (const path of this.localVersions.keys()) this.invalidateCachedStat(path);
@@ -127,7 +130,7 @@ export class SyncEngine {
   private async syncConfigFiles(manifest: RemoteManifest, api: SyncApiClient, result: SyncResult, group: ConfigGroup): Promise<boolean> {
     const index = CONFIG_INDEX[group];
     const entries: RemoteManifest["entries"] = Object.assign(Object.create(null), manifest[index]);
-    const paths = group === "appearance" ? await listAppearancePaths(this.configFiles) : [...this.pluginSettingsPaths];
+    const paths = await this.listConfigPaths(group);
     if (group === "appearance") checkAppearanceNames([...paths, ...Object.keys(entries).filter(isAppearancePath)]);
 
     const previousEntries: Record<string, LocalEntryState> = Object.assign(Object.create(null), this.configHistory(group));
@@ -136,7 +139,7 @@ export class SyncEngine {
     for (const path of paths) {
       // Hidden files do not have reliable Vault change events. Rehash on every run.
       const fullPath = this.configFiles.fullPath(path);
-      if (group === "pluginSettings" && !await this.configFiles.adapter.stat(fullPath)) continue;
+      if (group !== "appearance" && !await this.configFiles.adapter.stat(fullPath)) continue;
       local[path] = (await this.readConfigFile(fullPath, group)).snapshot;
     }
 
@@ -145,23 +148,33 @@ export class SyncEngine {
     return true;
   }
 
+  private async listConfigPaths(group: ConfigGroup): Promise<string[]> {
+    switch (group) {
+      case "appearance": return listAppearancePaths(this.configFiles);
+      case "hotkeys": return [HOTKEYS_PATH];
+      case "pluginSettings": return [...this.pluginSettingsPaths];
+    }
+  }
+
   private enabledConfigGroups(): ConfigGroup[] {
     const groups: ConfigGroup[] = [];
     if (this.settings.syncAppearance === true) groups.push("appearance");
+    if (this.settings.syncHotkeys === true) groups.push("hotkeys");
     if (this.pluginSettingsPaths.size > 0) groups.push("pluginSettings");
     return groups;
   }
 
   private includesConfigPath(group: ConfigGroup, path: string): boolean {
-    return group === "appearance" ? isAppearancePath(path) : this.pluginSettingsPaths.has(path);
+    switch (group) {
+      case "appearance": return isAppearancePath(path);
+      case "hotkeys": return path === HOTKEYS_PATH;
+      case "pluginSettings": return this.pluginSettingsPaths.has(path);
+    }
   }
 
   private configGroupForPath(path: string): ConfigGroup | undefined {
     const relative = this.configFiles.relativePath(path);
-    if (relative === undefined) return undefined;
-    if (this.pluginSettingsPaths.has(relative)) return "pluginSettings";
-    if (this.settings.syncAppearance === true && isAppearancePath(relative)) return "appearance";
-    return undefined;
+    return relative === undefined ? undefined : this.enabledConfigGroups().find(group => this.includesConfigPath(group, relative));
   }
 
   private configHistory(group: ConfigGroup): Record<string, LocalEntryState> | undefined {
@@ -485,8 +498,8 @@ export class SyncEngine {
     if (group) {
       const files = this.configFiles;
       const remoteText = this.decodeText(plain);
+      this.checkConfigContent(group, path, remoteText);
       if (group === "pluginSettings") {
-        checkPluginSettingsJson(remoteText, path);
         const relative = files.relativePath(path);
         if (!relative || !await isPluginSettingsInstalled(files, relative)) throw this.localChangedError(path);
       } else {
@@ -571,7 +584,7 @@ export class SyncEngine {
     await this.readExpectedLocal(path, local);
     const group = this.configGroupForPath(path);
     if (group) {
-      if (local && group === "appearance") await this.configFiles.adapter.trashLocal(path);
+      if (local && group !== "pluginSettings") await this.configFiles.adapter.trashLocal(path);
       return;
     }
     this.assertSnapshotCurrent(path, local);
@@ -688,8 +701,14 @@ export class SyncEngine {
     if (after?.type !== "file" || after.mtime !== stat.mtime || after.size !== stat.size || bytes.byteLength !== stat.size) {
       throw this.localChangedError(path);
     }
-    if (group === "pluginSettings") checkPluginSettingsJson(this.decodeText(bytes), path);
+    if (group !== "appearance") this.checkConfigContent(group, path, this.decodeText(bytes));
     return { bytes, snapshot: { hash, mtime: stat.mtime, size: stat.size, version: 0 } };
+  }
+
+  private checkConfigContent(group: ConfigGroup, path: string, text: string | undefined): void {
+    if (group === "appearance") return;
+    const value = parseConfigJson(text, path);
+    if (group === "hotkeys") checkHotkeys(value, path);
   }
 
   private async readExpectedLocal(
