@@ -1,4 +1,39 @@
-import type { ConfigFiles } from "./config-files";
+import { parseConfigJson, type ConfigFiles } from "./config-files";
+
+export const APPEARANCE_SETTINGS_PATH = "appearance.json";
+
+interface AppearanceSelection {
+  cssTheme: string;
+  enabledCssSnippets: string[];
+}
+
+function readAppearanceSettings(text: string | undefined, path: string): Record<string, unknown> {
+  const value = parseConfigJson(text, path);
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`Файл ${path} должен содержать объект настроек оформления.`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function selectAppearance(settings: Record<string, unknown>, path: string, useDefaults: boolean): AppearanceSelection {
+  const cssTheme = useDefaults ? settings.cssTheme ?? "" : settings.cssTheme;
+  const enabledCssSnippets = useDefaults ? settings.enabledCssSnippets ?? [] : settings.enabledCssSnippets;
+  if (typeof cssTheme !== "string" || !Array.isArray(enabledCssSnippets) ||
+      !enabledCssSnippets.every(snippet => typeof snippet === "string")) {
+    throw new Error(`Файл ${path} содержит некорректный выбор темы или сниппетов.`);
+  }
+  return { cssTheme, enabledCssSnippets };
+}
+
+export function readAppearanceSelection(text: string | undefined, path: string, useDefaults: boolean): AppearanceSelection {
+  return selectAppearance(readAppearanceSettings(text, path), path, useDefaults);
+}
+
+export function mergeAppearanceSelection(text: string, path: string, expected: string, selection: AppearanceSelection): string | undefined {
+  const settings = readAppearanceSettings(text, path);
+  if (JSON.stringify(selectAppearance(settings, path, true)) !== expected) return undefined;
+  return JSON.stringify({ ...settings, ...selection }, null, 2);
+}
 
 function isPortableName(name: string): boolean {
   return name.length > 0 && !/[\\:<>"|?*\u0000-\u001f]/u.test(name) && !/[ .]$/u.test(name) &&

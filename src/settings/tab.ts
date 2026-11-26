@@ -231,6 +231,18 @@ export class PrivateSyncSettingTab extends PluginSettingTab {
                 })
               );
             }
+          },
+          {
+            name: "Синхронизировать выбор темы и сниппетов",
+            desc: "Передаёт название активной темы и список включённых сниппетов. Для переноса их файлов используйте настройку выше.",
+            render: (setting) => {
+              setting.addToggle(toggle => toggle
+                .setValue(this.plugin.data.settings.syncAppearanceSelection === true)
+                .onChange(async (value) => {
+                  this.plugin.data.settings.syncAppearanceSelection = value;
+                  await this.plugin.savePluginData();
+                }));
+            }
           }
         ]
       },

@@ -13,6 +13,7 @@ export interface PrivateSyncSettings {
   periodicSyncMinutes: number;
   paused: boolean;
   syncAppearance: boolean;
+  syncAppearanceSelection: boolean;
   syncHotkeys: boolean;
   syncPluginList: boolean;
   pluginSettingsIds: string[];
@@ -47,6 +48,7 @@ export interface PrivateSyncLocalState {
   manifestCheckpoint?: { generation: number; digest: string };
   entries: Record<string, LocalEntryState>;
   appearance?: ConfigEntryState;
+  appearanceSelection?: ConfigEntryState;
   hotkeys?: ConfigEntryState;
   pluginSettings?: ConfigEntryState;
   pluginComparison?: PluginComparison;
@@ -79,6 +81,7 @@ export interface RemoteManifest {
   generation: number;
   entries: Record<string, ManifestEntry>;
   appearanceEntries?: Record<string, ManifestEntry>;
+  appearanceSelectionEntries?: Record<string, ManifestEntry>;
   hotkeyEntries?: Record<string, ManifestEntry>;
   pluginLists?: Record<string, CommunityPluginInfo[]>;
   pluginSettingsEntries?: Record<string, ManifestEntry>;

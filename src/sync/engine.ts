@@ -8,13 +8,21 @@ import type {
   RemoteManifest,
   SyncResult
 } from "../types/model";
-import { checkAppearanceNames, isAppearancePath, listAppearancePaths } from "./appearance";
+import {
+  APPEARANCE_SETTINGS_PATH, checkAppearanceNames, isAppearancePath, listAppearancePaths,
+  mergeAppearanceSelection, readAppearanceSelection
+} from "./appearance";
 import { ConfigFiles, parseConfigJson } from "./config-files";
 import { checkHotkeys, HOTKEYS_PATH } from "./hotkeys";
 import { reconcilePluginLists } from "./plugin-list";
 import { isPluginSettingsInstalled, listSelectedSettingsPaths } from "./plugin-settings";
 
-const CONFIG_INDEX = { appearance: "appearanceEntries", hotkeys: "hotkeyEntries", pluginSettings: "pluginSettingsEntries" } as const;
+const CONFIG_INDEX = {
+  appearance: "appearanceEntries",
+  appearanceSelection: "appearanceSelectionEntries",
+  hotkeys: "hotkeyEntries",
+  pluginSettings: "pluginSettingsEntries"
+} as const;
 type ConfigGroup = keyof typeof CONFIG_INDEX;
 const CONFIG_GROUPS = Object.keys(CONFIG_INDEX) as ConfigGroup[];
 
@@ -151,6 +159,7 @@ export class SyncEngine {
   private async listConfigPaths(group: ConfigGroup): Promise<string[]> {
     switch (group) {
       case "appearance": return listAppearancePaths(this.configFiles);
+      case "appearanceSelection": return [APPEARANCE_SETTINGS_PATH];
       case "hotkeys": return [HOTKEYS_PATH];
       case "pluginSettings": return [...this.pluginSettingsPaths];
     }
@@ -159,6 +168,7 @@ export class SyncEngine {
   private enabledConfigGroups(): ConfigGroup[] {
     const groups: ConfigGroup[] = [];
     if (this.settings.syncAppearance === true) groups.push("appearance");
+    if (this.settings.syncAppearanceSelection === true) groups.push("appearanceSelection");
     if (this.settings.syncHotkeys === true) groups.push("hotkeys");
     if (this.pluginSettingsPaths.size > 0) groups.push("pluginSettings");
     return groups;
@@ -167,6 +177,7 @@ export class SyncEngine {
   private includesConfigPath(group: ConfigGroup, path: string): boolean {
     switch (group) {
       case "appearance": return isAppearancePath(path);
+      case "appearanceSelection": return path === APPEARANCE_SETTINGS_PATH;
       case "hotkeys": return path === HOTKEYS_PATH;
       case "pluginSettings": return this.pluginSettingsPaths.has(path);
     }
@@ -204,7 +215,7 @@ export class SyncEngine {
       const localFile = local[path];
       const remote = entries[path];
       const previous = previousEntries[path];
-      if (group === "pluginSettings" && (!localFile || remote?.deleted)) {
+      if ((group === "pluginSettings" || group === "appearanceSelection") && (!localFile || remote?.deleted)) {
         // An absent settings file never deletes data on the other devices.
         if (remote && !remote.deleted) {
           await this.applyRemoteFile(filePath, remote, api, undefined);
@@ -498,6 +509,10 @@ export class SyncEngine {
     if (group) {
       const files = this.configFiles;
       const remoteText = this.decodeText(plain);
+      if (group === "appearanceSelection") {
+        await this.applyAppearanceSelection(path, remoteText, local);
+        return;
+      }
       this.checkConfigContent(group, path, remoteText);
       if (group === "pluginSettings") {
         const relative = files.relativePath(path);
@@ -539,6 +554,23 @@ export class SyncEngine {
     } else {
       throw new Error(`Cannot write ${path}: a folder exists at this path.`);
     }
+  }
+
+  private async applyAppearanceSelection(path: string, remoteText: string | undefined, local: LocalFileSnapshot | undefined): Promise<void> {
+    const selection = readAppearanceSelection(remoteText, path, false);
+    const files = this.configFiles;
+    await files.ensureParentFolders(path);
+    const current = await this.readExpectedLocal(path, local);
+    if (!current) {
+      await files.adapter.write(path, JSON.stringify(selection, null, 2));
+      return;
+    }
+    const expected = this.decodeText(current.bytes)!;
+    await files.adapter.process(path, text => {
+      const updated = mergeAppearanceSelection(text, path, expected, selection);
+      if (updated === undefined) throw this.localChangedError(path);
+      return updated;
+    });
   }
 
   private async resolveContentConflict(
@@ -584,7 +616,7 @@ export class SyncEngine {
     await this.readExpectedLocal(path, local);
     const group = this.configGroupForPath(path);
     if (group) {
-      if (local && group !== "pluginSettings") await this.configFiles.adapter.trashLocal(path);
+      if (local && (group === "appearance" || group === "hotkeys")) await this.configFiles.adapter.trashLocal(path);
       return;
     }
     this.assertSnapshotCurrent(path, local);
@@ -695,14 +727,20 @@ export class SyncEngine {
     const adapter = this.configFiles.adapter;
     const stat = await adapter.stat(path);
     if (stat?.type !== "file") throw this.localChangedError(path);
-    const bytes = await adapter.readBinary(path);
+    const raw = await adapter.readBinary(path);
+    let bytes = raw;
+    if (group === "appearanceSelection") {
+      const selection = readAppearanceSelection(this.decodeText(raw), path, true);
+      bytes = new TextEncoder().encode(JSON.stringify(selection)).buffer;
+    } else if (group !== "appearance") {
+      this.checkConfigContent(group, path, this.decodeText(raw));
+    }
     const hash = await sha256Hex(bytes);
     const after = await adapter.stat(path);
-    if (after?.type !== "file" || after.mtime !== stat.mtime || after.size !== stat.size || bytes.byteLength !== stat.size) {
+    if (after?.type !== "file" || after.mtime !== stat.mtime || after.size !== stat.size || raw.byteLength !== stat.size) {
       throw this.localChangedError(path);
     }
-    if (group !== "appearance") this.checkConfigContent(group, path, this.decodeText(bytes));
-    return { bytes, snapshot: { hash, mtime: stat.mtime, size: stat.size, version: 0 } };
+    return { bytes, snapshot: { hash, mtime: stat.mtime, size: bytes.byteLength, version: 0 } };
   }
 
   private checkConfigContent(group: ConfigGroup, path: string, text: string | undefined): void {

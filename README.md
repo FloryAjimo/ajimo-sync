@@ -36,9 +36,9 @@ Do not generate a new key to connect an existing vault. The server cannot recove
 
 1. On the device with your preferred theme and snippets, turn on **Sync themes and CSS snippets** in Ajimo Sync and run a manual sync.
 2. Turn on the option on each device that should share these files and run a sync there. The option starts disabled on each installation.
-3. In Obsidian's **Appearance** settings, select the downloaded theme and reload the CSS snippet list, then enable the snippets you want. Restart Obsidian if the theme list still needs refreshing.
+3. To share which theme and snippets are active, enable **Синхронизировать выбор темы и сниппетов** (sync theme and snippet selection) on the participating devices. Sync from the source device first. Restart Obsidian on the receiving device if it still shows the previous selection.
 
-Ajimo Sync transfers `theme.css` and `manifest.json` for each theme and `.css` files directly in the snippets folder. Each device keeps its active theme and snippet selections. A manual, startup, or periodic sync picks up edits to these files even when Obsidian emits no vault file event. Deletions propagate to participating devices and go to the local vault trash. If both devices edit the same file, find the saved local copy in `ajimo-sync-conflicts` in the Obsidian configuration folder.
+Ajimo Sync transfers `theme.css` and `manifest.json` for each theme and `.css` files directly in the snippets folder. The separate selection option shares the active theme name and enabled snippet names. Fonts, scale, and other appearance preferences stay local. The selected theme and snippets need to be available on the receiving device. A manual, startup, or periodic sync picks up edits even when Obsidian emits no vault file event. Deleted theme and snippet files go to the local vault trash on participating devices. If both devices edit the same file or selection, find the saved local copy in `ajimo-sync-conflicts` in the Obsidian configuration folder.
 
 ## Sync custom hotkeys
 
