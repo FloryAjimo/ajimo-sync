@@ -48,6 +48,14 @@ Ajimo Sync transfers `theme.css` and `manifest.json` for each theme and `.css` f
 
 On mobile, the list omits plugins marked desktop-only. Private or manually installed plugins may lack a public directory listing. To remove a device's shared list, turn off the option on that device and run a sync.
 
+## Sync settings for selected plugins
+
+1. Install the same plugin on the devices that should share its settings. In Ajimo Sync, open **Настройки выбранных плагинов → Выбрать** (settings for selected plugins → choose). Enable it first on the source device and run a sync.
+2. Enable it on the receiving device and sync there. Restart Obsidian to load the received settings.
+3. If the file differs on both devices, find the earlier local copy in `ajimo-sync-conflicts/plugins/<plugin-id>` inside the receiving device's configuration folder.
+
+This option shares the entire `data.json` of the chosen plugin, which may contain tokens and machine-specific paths. An absent local file can be restored from the shared copy. You can deselect a plugin to stop further syncing on that device. The last encrypted copy remains on the server.
+
 ## Data handling and network access
 
 The plugin sends requests only to the server URL you configure. It does not contact an author-hosted service or send telemetry.
@@ -62,7 +70,7 @@ With Obsidian 1.11.5 or later, Ajimo Sync migrates the API token and vault key t
 
 The diagnostics dialog shows the installed version, automatic synchronization settings, timestamps, and result counters. You can copy the report to the clipboard. It excludes the server URL, API token, encryption key, Vault/Device identifiers, device name, file paths, and raw error messages. It is never sent automatically.
 
-The plugin reads and changes notes and attachments using Obsidian's Vault API and uses the adapter for the optional theme and snippet files. Plugin list sharing reads only installed plugins' manifests. It shares IDs, names, and desktop-only flags inside the encrypted index. Plugin files, settings, enabled states, workspace layouts, and trash stay local. Conflict copies preserve competing changes. Deletions of notes and attachments use Obsidian's configured trash preference. Keep your own backups. If a device reports an older or incompatible manifest, check the server URL and recover files into a separate test vault before resuming synchronization.
+The plugin reads and changes notes and attachments using Obsidian's Vault API and uses the adapter for optional themes, snippets, and selected plugin settings. Plugin list sharing reads installed plugins' manifests and shares IDs, names, and desktop-only flags inside the encrypted index. Plugin code, enabled states, Ajimo Sync's own settings, workspace layouts, and trash stay local. Conflict copies preserve competing changes. Deletions of notes and attachments use Obsidian's configured trash preference. Keep your own backups. If a device reports an older or incompatible manifest, check the server URL and recover files into a separate test vault before resuming synchronization.
 
 ## Source and license
 

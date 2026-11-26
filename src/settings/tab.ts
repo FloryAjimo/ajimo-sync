@@ -4,6 +4,8 @@ import { DiagnosticReportModal } from "../diagnostics/modal";
 import type PrivateSyncPlugin from "../main";
 import { generateVaultKeyBase64 } from "../crypto/crypto";
 import { PluginListModal } from "./plugin-list-modal";
+import { PluginSettingsModal } from "./plugin-settings-modal";
+import { listConfigurablePlugins } from "../sync/plugin-settings";
 
 interface SyncSettingRow extends SettingDefinitionBase {
   render(setting: Setting): void;
@@ -257,6 +259,23 @@ export class PrivateSyncSettingTab extends PluginSettingTab {
               setting.addButton((button) => button.setButtonText("Показать")
                 .setDisabled(this.plugin.data.settings.syncPluginList !== true)
                 .onClick(() => new PluginListModal(this.app, this.plugin.data.state.pluginComparison).open()));
+            }
+          },
+          {
+            name: "Настройки выбранных плагинов",
+            desc: "Выберите плагины на каждом устройстве. После получения настроек перезапустите Obsidian, чтобы применить их.",
+            render: (setting) => {
+              setting.addButton(button => button.setButtonText("Выбрать").onClick(async () => {
+                button.setDisabled(true);
+                try {
+                  const installed = await listConfigurablePlugins(this.app.vault);
+                  new PluginSettingsModal(this.app, this.plugin, installed).open();
+                } catch {
+                  new Notice("Ajimo Sync: не удалось прочитать список установленных плагинов.");
+                } finally {
+                  button.setDisabled(false);
+                }
+              }));
             }
           }
         ]

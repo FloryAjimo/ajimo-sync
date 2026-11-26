@@ -8,8 +8,13 @@ import type {
   RemoteManifest,
   SyncResult
 } from "../types/model";
-import { AppearanceFiles, checkAppearanceNames, isAppearancePath } from "./appearance";
+import { checkAppearanceNames, isAppearancePath, listAppearancePaths } from "./appearance";
+import { ConfigFiles } from "./config-files";
 import { reconcilePluginLists } from "./plugin-list";
+import { checkPluginSettingsJson, isPluginSettingsInstalled, listSelectedSettingsPaths } from "./plugin-settings";
+
+const CONFIG_INDEX = { appearance: "appearanceEntries", pluginSettings: "pluginSettingsEntries" } as const;
+type ConfigGroup = keyof typeof CONFIG_INDEX;
 
 interface LocalFileSnapshot {
   file?: TFile;
@@ -21,7 +26,8 @@ interface LocalFileSnapshot {
 
 export class SyncEngine {
   private readonly localVersions = new Map<string, number>();
-  private readonly appearance?: AppearanceFiles;
+  private readonly configFiles: ConfigFiles;
+  private pluginSettingsPaths = new Set<string>();
 
   constructor(
     private readonly app: App,
@@ -29,7 +35,7 @@ export class SyncEngine {
     private readonly state: PrivateSyncLocalState,
     private readonly persistState: () => Promise<void>
   ) {
-    if (settings.syncAppearance === true) this.appearance = new AppearanceFiles(app.vault);
+    this.configFiles = new ConfigFiles(app.vault);
   }
 
   async sync(): Promise<SyncResult> {
@@ -41,6 +47,7 @@ export class SyncEngine {
       this.validateSettings();
       const api = new SyncApiClient(this.settings.serverUrl, this.settings.apiToken, this.settings.vaultId);
       await api.health();
+      this.pluginSettingsPaths = await listSelectedSettingsPaths(this.configFiles, this.settings.pluginSettingsIds);
 
       const remoteResponse = await api.getManifest();
       let manifest: RemoteManifest;
@@ -77,8 +84,8 @@ export class SyncEngine {
       if (await this.reconcileEntries(manifest.entries, this.state.entries, local, api, result)) {
         manifestDirty = true;
       }
-      if (this.appearance && await this.syncAppearance(manifest, api, result, this.appearance)) {
-        manifestDirty = true;
+      for (const group of this.enabledConfigGroups()) {
+        if (await this.syncConfigFiles(manifest, api, result, group)) manifestDirty = true;
       }
 
       if (manifestDirty) {
@@ -106,6 +113,8 @@ export class SyncEngine {
       this.state.entries = stateBeforeSync.entries;
       if (stateBeforeSync.appearance) this.state.appearance = stateBeforeSync.appearance;
       else delete this.state.appearance;
+      if (stateBeforeSync.pluginSettings) this.state.pluginSettings = stateBeforeSync.pluginSettings;
+      else delete this.state.pluginSettings;
       if (stateBeforeSync.pluginComparison) this.state.pluginComparison = stateBeforeSync.pluginComparison;
       else delete this.state.pluginComparison;
       for (const path of this.localVersions.keys()) this.invalidateCachedStat(path);
@@ -115,28 +124,49 @@ export class SyncEngine {
     }
   }
 
-  private async syncAppearance(manifest: RemoteManifest, api: SyncApiClient, result: SyncResult, appearance: AppearanceFiles): Promise<boolean> {
-    const entries: RemoteManifest["entries"] = Object.assign(Object.create(null), manifest.appearanceEntries);
-    const paths = await appearance.listPaths();
-    checkAppearanceNames([...paths, ...Object.keys(entries).filter(isAppearancePath)]);
+  private async syncConfigFiles(manifest: RemoteManifest, api: SyncApiClient, result: SyncResult, group: ConfigGroup): Promise<boolean> {
+    const index = CONFIG_INDEX[group];
+    const entries: RemoteManifest["entries"] = Object.assign(Object.create(null), manifest[index]);
+    const paths = group === "appearance" ? await listAppearancePaths(this.configFiles) : [...this.pluginSettingsPaths];
+    if (group === "appearance") checkAppearanceNames([...paths, ...Object.keys(entries).filter(isAppearancePath)]);
 
-    const previousEntries: Record<string, LocalEntryState> = Object.assign(Object.create(null), this.appearanceHistory());
-    this.state.appearance = { configDir: appearance.configDir, entries: previousEntries };
+    const previousEntries: Record<string, LocalEntryState> = Object.assign(Object.create(null), this.configHistory(group));
+    this.state[group] = { configDir: this.configFiles.configDir, entries: previousEntries };
     const local: Record<string, LocalFileSnapshot> = Object.create(null);
     for (const path of paths) {
       // Hidden files do not have reliable Vault change events. Rehash on every run.
-      local[path] = (await this.readAppearanceFile(appearance, appearance.fullPath(path))).snapshot;
+      const fullPath = this.configFiles.fullPath(path);
+      if (group === "pluginSettings" && !await this.configFiles.adapter.stat(fullPath)) continue;
+      local[path] = (await this.readConfigFile(fullPath, group)).snapshot;
     }
 
-    if (!await this.reconcileEntries(entries, previousEntries, local, api, result, appearance)) return false;
-    manifest.appearanceEntries = entries;
+    if (!await this.reconcileEntries(entries, previousEntries, local, api, result, group)) return false;
+    manifest[index] = entries;
     return true;
   }
 
-  private appearanceHistory(): Record<string, LocalEntryState> | undefined {
-    if (this.appearance && this.state.appearance?.configDir === this.appearance.configDir) {
-      return this.state.appearance.entries;
-    }
+  private enabledConfigGroups(): ConfigGroup[] {
+    const groups: ConfigGroup[] = [];
+    if (this.settings.syncAppearance === true) groups.push("appearance");
+    if (this.pluginSettingsPaths.size > 0) groups.push("pluginSettings");
+    return groups;
+  }
+
+  private includesConfigPath(group: ConfigGroup, path: string): boolean {
+    return group === "appearance" ? isAppearancePath(path) : this.pluginSettingsPaths.has(path);
+  }
+
+  private configGroupForPath(path: string): ConfigGroup | undefined {
+    const relative = this.configFiles.relativePath(path);
+    if (relative === undefined) return undefined;
+    if (this.pluginSettingsPaths.has(relative)) return "pluginSettings";
+    if (this.settings.syncAppearance === true && isAppearancePath(relative)) return "appearance";
+    return undefined;
+  }
+
+  private configHistory(group: ConfigGroup): Record<string, LocalEntryState> | undefined {
+    const history = this.state[group];
+    if (history?.configDir === this.configFiles.configDir) return history.entries;
     return undefined;
   }
 
@@ -146,7 +176,7 @@ export class SyncEngine {
     local: Record<string, LocalFileSnapshot>,
     api: SyncApiClient,
     result: SyncResult,
-    appearance?: AppearanceFiles
+    group?: ConfigGroup
   ): Promise<boolean> {
     let manifestDirty = false;
     const paths = new Set<string>([
@@ -156,11 +186,20 @@ export class SyncEngine {
     ]);
 
     for (const path of Array.from(paths).sort()) {
-      if (appearance ? !isAppearancePath(path) : this.isExcludedPath(path)) continue;
-      const filePath = appearance ? appearance.fullPath(path) : path;
+      if (group ? !this.includesConfigPath(group, path) : this.isExcludedPath(path)) continue;
+      const filePath = group ? this.configFiles.fullPath(path) : path;
       const localFile = local[path];
       const remote = entries[path];
       const previous = previousEntries[path];
+      if (group === "pluginSettings" && (!localFile || remote?.deleted)) {
+        // An absent settings file never deletes data on the other devices.
+        if (remote && !remote.deleted) {
+          await this.applyRemoteFile(filePath, remote, api, undefined);
+          this.recordRemoteState(previousEntries, path, remote);
+          result.downloaded += 1;
+        }
+        continue;
+      }
 
       if (!previous) {
         if (localFile && remote && !remote.deleted) {
@@ -284,17 +323,18 @@ export class SyncEngine {
       throw new Error("Invalid remote manifest.");
     }
     this.validateEntries(manifest.entries, manifest.generation);
-    if (this.appearance && manifest.appearanceEntries !== undefined) {
-      const entries = manifest.appearanceEntries;
-      if (!entries || typeof entries !== "object" || Array.isArray(entries)) throw new Error("Invalid appearance index.");
-      this.validateEntries(entries, manifest.generation, true);
+    for (const group of this.enabledConfigGroups()) {
+      const entries = manifest[CONFIG_INDEX[group]];
+      if (entries === undefined) continue;
+      if (!entries || typeof entries !== "object" || Array.isArray(entries)) throw new Error("Invalid configuration index.");
+      this.validateEntries(entries, manifest.generation, group);
     }
   }
 
-  private validateEntries(entries: RemoteManifest["entries"], generation: number, appearance = false): void {
+  private validateEntries(entries: RemoteManifest["entries"], generation: number, group?: ConfigGroup): void {
     const hash = /^[a-f0-9]{64}$/;
     for (const [path, entry] of Object.entries(entries)) {
-      if (appearance && !isAppearancePath(path)) continue;
+      if (group && !this.includesConfigPath(group, path)) continue;
       if (!this.isRelativeVaultPath(path) || !entry || path !== entry.path ||
           !Number.isSafeInteger(entry.revision) || entry.revision < 1 || entry.revision > generation ||
           typeof entry.deleted !== "boolean" ||
@@ -314,8 +354,10 @@ export class SyncEngine {
     }
     // Upgrades from versions without a checkpoint can still compare known file revisions.
     this.checkEntryHistory(this.state.entries, manifest.entries, path => !this.isExcludedPath(path));
-    const appearanceHistory = this.appearanceHistory();
-    if (appearanceHistory) this.checkEntryHistory(appearanceHistory, manifest.appearanceEntries ?? {}, isAppearancePath);
+    for (const group of this.enabledConfigGroups()) {
+      const history = this.configHistory(group);
+      if (history) this.checkEntryHistory(history, manifest[CONFIG_INDEX[group]] ?? {}, path => this.includesConfigPath(group, path));
+    }
     if (checkpoint?.digest === digest) return;
 
     // Save the authenticated version before applying it. A later error can leave some files changed.
@@ -396,10 +438,10 @@ export class SyncEngine {
     previousEntries: Record<string, LocalEntryState>,
     api: SyncApiClient
   ): Promise<void> {
-    const appearance = this.appearance;
+    const group = this.configGroupForPath(filePath);
     let content;
-    if (appearance?.contains(filePath)) {
-      content = await this.readAppearanceFile(appearance, filePath);
+    if (group) {
+      content = await this.readConfigFile(filePath, group);
       if (content.snapshot.hash !== local.hash) throw this.localChangedError(filePath);
     } else {
       this.assertSnapshotCurrent(filePath, local);
@@ -439,19 +481,26 @@ export class SyncEngine {
     if (await sha256Hex(plain) !== remote.contentHash) {
       throw new Error(`Decrypted content hash mismatch for ${path}.`);
     }
-    const appearance = this.appearance;
-    if (appearance?.contains(path)) {
-      await appearance.ensureParentFolders(path);
-      const current = await this.readExpectedLocal(path, local);
+    const group = this.configGroupForPath(path);
+    if (group) {
+      const files = this.configFiles;
       const remoteText = this.decodeText(plain);
+      if (group === "pluginSettings") {
+        checkPluginSettingsJson(remoteText, path);
+        const relative = files.relativePath(path);
+        if (!relative || !await isPluginSettingsInstalled(files, relative)) throw this.localChangedError(path);
+      } else {
+        await files.ensureParentFolders(path);
+      }
+      const current = await this.readExpectedLocal(path, local);
       const localText = current && this.decodeText(current.bytes);
       if (remoteText !== undefined && localText !== undefined) {
-        await appearance.adapter.process(path, (content) => {
+        await files.adapter.process(path, (content) => {
           if (content !== localText) throw this.localChangedError(path);
           return remoteText;
         });
       } else {
-        await appearance.adapter.writeBinary(path, plain);
+        await files.adapter.writeBinary(path, plain);
       }
       return;
     }
@@ -490,14 +539,14 @@ export class SyncEngine {
   }
 
   private async preserveConflictCopy(path: string, local: LocalFileSnapshot): Promise<void> {
-    const appearance = this.appearance;
-    if (appearance?.contains(path)) {
-      const conflictPath = this.makeConflictPath(appearance.conflictPath(path));
-      await appearance.ensureParentFolders(conflictPath);
-      if (await appearance.adapter.exists(conflictPath)) throw new Error(`Conflict copy already exists: ${conflictPath}`);
+    if (this.configGroupForPath(path)) {
+      const files = this.configFiles;
+      const conflictPath = this.makeConflictPath(files.conflictPath(path));
+      await files.ensureParentFolders(conflictPath);
+      if (await files.adapter.exists(conflictPath)) throw new Error(`Conflict copy already exists: ${conflictPath}`);
       const current = await this.readExpectedLocal(path, local);
       if (!current) throw this.localChangedError(path);
-      await appearance.adapter.writeBinary(conflictPath, current.bytes);
+      await files.adapter.writeBinary(conflictPath, current.bytes);
       return;
     }
     const current = await this.readExpectedLocal(path, local);
@@ -520,9 +569,9 @@ export class SyncEngine {
 
   private async deletePathIfExists(path: string, local: LocalFileSnapshot | undefined): Promise<void> {
     await this.readExpectedLocal(path, local);
-    const appearance = this.appearance;
-    if (appearance?.contains(path)) {
-      if (local) await appearance.adapter.trashLocal(path);
+    const group = this.configGroupForPath(path);
+    if (group) {
+      if (local && group === "appearance") await this.configFiles.adapter.trashLocal(path);
       return;
     }
     this.assertSnapshotCurrent(path, local);
@@ -629,15 +678,17 @@ export class SyncEngine {
     return { bytes, snapshot };
   }
 
-  private async readAppearanceFile(appearance: AppearanceFiles, path: string): Promise<{ bytes: ArrayBuffer; snapshot: LocalFileSnapshot }> {
-    const stat = await appearance.adapter.stat(path);
+  private async readConfigFile(path: string, group: ConfigGroup): Promise<{ bytes: ArrayBuffer; snapshot: LocalFileSnapshot }> {
+    const adapter = this.configFiles.adapter;
+    const stat = await adapter.stat(path);
     if (stat?.type !== "file") throw this.localChangedError(path);
-    const bytes = await appearance.adapter.readBinary(path);
+    const bytes = await adapter.readBinary(path);
     const hash = await sha256Hex(bytes);
-    const after = await appearance.adapter.stat(path);
+    const after = await adapter.stat(path);
     if (after?.type !== "file" || after.mtime !== stat.mtime || after.size !== stat.size || bytes.byteLength !== stat.size) {
       throw this.localChangedError(path);
     }
+    if (group === "pluginSettings") checkPluginSettingsJson(this.decodeText(bytes), path);
     return { bytes, snapshot: { hash, mtime: stat.mtime, size: stat.size, version: 0 } };
   }
 
@@ -645,13 +696,13 @@ export class SyncEngine {
     path: string,
     expected: LocalFileSnapshot | undefined
   ): Promise<{ bytes: ArrayBuffer; snapshot: LocalFileSnapshot } | undefined> {
-    const appearance = this.appearance;
-    if (appearance?.contains(path)) {
+    const group = this.configGroupForPath(path);
+    if (group) {
       if (!expected) {
-        if (await appearance.adapter.stat(path)) throw this.localChangedError(path);
+        if (await this.configFiles.adapter.stat(path)) throw this.localChangedError(path);
         return undefined;
       }
-      const current = await this.readAppearanceFile(appearance, path);
+      const current = await this.readConfigFile(path, group);
       if (current.snapshot.hash !== expected.hash) throw this.localChangedError(path);
       return current;
     }

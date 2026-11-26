@@ -1,4 +1,4 @@
-import { normalizePath, Platform, type Vault } from "obsidian";
+import { normalizePath, Platform, type DataAdapter, type Vault } from "obsidian";
 import type { CommunityPluginInfo, PluginComparison, PrivateSyncSettings, RemoteManifest } from "../types/model";
 
 const AJIMO_SYNC_ID = "floryajimo-private-sync";
@@ -16,7 +16,30 @@ function readPluginInfo(value: unknown): CommunityPluginInfo | undefined {
   return { id, name: name.trim(), isDesktopOnly };
 }
 
-async function listInstalledPlugins(vault: Vault): Promise<CommunityPluginInfo[]> {
+export async function readInstalledPlugin(adapter: DataAdapter, folder: string): Promise<CommunityPluginInfo | undefined> {
+  const path = `${folder}/manifest.json`;
+  const stat = await adapter.stat(path);
+  if (stat?.type !== "file" || stat.size > MAX_MANIFEST_BYTES) return undefined;
+  if ((await adapter.stat(`${folder}/main.js`))?.type !== "file") return undefined;
+
+  let contents: string;
+  try {
+    contents = await adapter.read(path);
+  } catch (error) {
+    if (!(await adapter.stat(path))) return undefined; // The plugin may have been uninstalled during the scan.
+    throw error;
+  }
+  try {
+    return readPluginInfo(JSON.parse(contents));
+  } catch {
+    return undefined; // An incomplete manifest is not an installed plugin.
+  }
+}
+
+export async function listInstalledPlugins(
+  vault: Vault,
+  includes?: (plugin: CommunityPluginInfo, folder: string) => boolean
+): Promise<CommunityPluginInfo[]> {
   const { adapter } = vault;
   const directory = normalizePath(`${vault.configDir}/plugins`);
   if ((await adapter.stat(directory))?.type !== "folder") return [];
@@ -27,26 +50,8 @@ async function listInstalledPlugins(vault: Vault): Promise<CommunityPluginInfo[]
     const name = folder.slice(directory.length + 1);
     if (!name || name === "." || name === ".." || name === AJIMO_SYNC_ID || /[/\\:\u0000-\u001f]/.test(name)) continue;
 
-    const path = `${folder}/manifest.json`;
-    const stat = await adapter.stat(path);
-    if (stat?.type !== "file" || stat.size > MAX_MANIFEST_BYTES) continue;
-    if ((await adapter.stat(`${folder}/main.js`))?.type !== "file") continue;
-
-    let contents: string;
-    try {
-      contents = await adapter.read(path);
-    } catch (error) {
-      if (!(await adapter.stat(path))) continue; // The plugin may have been uninstalled during the scan.
-      throw error;
-    }
-    let value: unknown;
-    try {
-      value = JSON.parse(contents);
-    } catch {
-      continue; // An incomplete manifest is not an installed plugin.
-    }
-    const plugin = readPluginInfo(value);
-    if (plugin && !plugins.has(plugin.id)) plugins.set(plugin.id, plugin);
+    const plugin = await readInstalledPlugin(adapter, folder);
+    if (plugin && (!includes || includes(plugin, name)) && !plugins.has(plugin.id)) plugins.set(plugin.id, plugin);
   }
   return [...plugins.values()].sort((a, b) => a.id.localeCompare(b.id, "en"));
 }

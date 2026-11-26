@@ -14,6 +14,7 @@ export interface PrivateSyncSettings {
   paused: boolean;
   syncAppearance: boolean;
   syncPluginList: boolean;
+  pluginSettingsIds: string[];
 }
 
 export interface CommunityPluginInfo {
@@ -35,11 +36,17 @@ export interface LocalEntryState {
   remoteDeleted?: boolean;
 }
 
+export interface ConfigEntryState {
+  configDir: string;
+  entries: Record<string, LocalEntryState>;
+}
+
 export interface PrivateSyncLocalState {
   manifestEtag?: string;
   manifestCheckpoint?: { generation: number; digest: string };
   entries: Record<string, LocalEntryState>;
-  appearance?: { configDir: string; entries: Record<string, LocalEntryState> };
+  appearance?: ConfigEntryState;
+  pluginSettings?: ConfigEntryState;
   pluginComparison?: PluginComparison;
   lastSuccessfulSyncAt?: number;
   lastErrorAt?: number;
@@ -71,6 +78,7 @@ export interface RemoteManifest {
   entries: Record<string, ManifestEntry>;
   appearanceEntries?: Record<string, ManifestEntry>;
   pluginLists?: Record<string, CommunityPluginInfo[]>;
+  pluginSettingsEntries?: Record<string, ManifestEntry>;
 }
 
 export interface SyncResult {
